@@ -108,7 +108,8 @@ LocalFileLoader::LocalFileLoader(const Path &filename)
 
 	DetectSizeFd();
 #else // _WIN32
-	const DWORD access = GENERIC_READ, share = FILE_SHARE_READ, mode = OPEN_EXISTING, flags = FILE_ATTRIBUTE_NORMAL;
+	// Share writes too, so the ISO can be edited by other programs while a game is running (like old versions).
+	const DWORD access = GENERIC_READ, share = FILE_SHARE_READ | FILE_SHARE_WRITE, mode = OPEN_EXISTING, flags = FILE_ATTRIBUTE_NORMAL;
 #if PPSSPP_PLATFORM(UWP)
 	handle_ = CreateFile2FromAppW(filename.ToWString().c_str(), access, share, mode, nullptr);
 #else
