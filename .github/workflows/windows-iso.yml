@@ -1,0 +1,88 @@
+name: Windows ISO escribible
+
+on:
+  push:
+    branches:
+    - iso-windows
+  workflow_dispatch:
+
+env:
+  BUILD_CONFIGURATION: Release
+
+jobs:
+  build-windows:
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [x64]
+
+    runs-on: windows-latest
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        submodules: recursive
+
+    - name: Add MSBuild to PATH
+      uses: microsoft/setup-msbuild@30375c66a4eea26614e0d39710365f22f8b0af57 # v3.0.0
+
+    - name: Check Valid Version Tags
+      id: valid-tags
+      shell: bash
+      run: |
+        # This is required for git describe --always to work for git-version.cpp.
+        git fetch --deepen=15000 --no-recurse-submodules --tags || exit 0
+        echo "count=$(git tag -l 'v[0-9]*' | wc -l | tr -d ' ')" >> $GITHUB_OUTPUT # $env:GITHUB_OUTPUT on pwsh
+
+    - name: Fetch upstream tags # Fallback to fetching tags from upstream
+      if: steps.valid-tags.outputs.count == '0'
+      shell: bash
+      run: |
+        # TODO: should try to fetch tags from whereever this repo was forked from before fetching from official repo
+        git remote add upstream https://github.com/hrydgard/ppsspp.git
+        git fetch --deepen=15000 --no-recurse-submodules --tags --force upstream || exit 0
+
+    - name: Create git-version.cpp for Windows # Not sure why the one at git-version-gen.cmd couldn't get the version properly.
+      #if: github.ref_type == 'tag'
+      run: |
+        $GIT_VERSION=git describe --always
+        echo "Num of Valid Tags = ${{ steps.valid-tags.outputs.count }}"
+        echo "Test GitVer = ${{ github.ref_name }} / $GIT_VERSION / ${GITHUB_REF_NAME}"
+        echo "const char *PPSSPP_GIT_VERSION = `"$GIT_VERSION`";" > git-version.cpp
+        echo "#define PPSSPP_GIT_VERSION_NO_UPDATE 1" >> git-version.cpp
+        
+        # Generate Windows/win-version.h too.
+        if ($GIT_VERSION.StartsWith("v")) {
+          $WIN_VERSION_COMMA=$GIT_VERSION -replace '^v', '' -replace '-g[0-9a-f]+$', '' -replace '[-\.]', ','
+          echo "Test WinVer = $WIN_VERSION_COMMA"
+          echo "#define PPSSPP_WIN_VERSION_STRING `"$GIT_VERSION`"" > Windows/win-version.h
+          echo "#define PPSSPP_WIN_VERSION_COMMA $WIN_VERSION_COMMA" >> Windows/win-version.h
+          echo "#define PPSSPP_WIN_VERSION_NO_UPDATE 1" >> Windows/win-version.h
+        }
+        
+    - name: Build Windows
+      working-directory: ${{ env.GITHUB_WORKSPACE }}
+      run: msbuild /m /p:TrackFileAccess=false /p:Configuration=${{ env.BUILD_CONFIGURATION }} /p:Platform=${{ matrix.platform }} Windows/PPSSPP.sln
+
+    - name: Package build
+      working-directory: ${{ env.GITHUB_WORKSPACE }}
+      run: |
+        mkdir ppsspp
+        cp PPSSPP*.exe ppsspp/
+        cp *.pdb ppsspp/
+        cp Windows/*.bat ppsspp/
+        cp -r assets ppsspp/assets
+
+    - name: Package headless (non-Win32)
+      if: matrix.platform != 'Win32'
+      run: cp Windows/${{ matrix.platform }}/Release/*.exe ppsspp/
+
+    - name: Package headless (Win32)
+      if: matrix.platform == 'Win32'
+      run: cp Windows/Release/*.exe ppsspp/
+
+    - name: Upload build
+      uses: actions/upload-artifact@v7
+      with:
+        name: Windows ${{ matrix.platform }} build
+        path: ppsspp/
+
